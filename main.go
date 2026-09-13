@@ -81,12 +81,20 @@ func cpu(opcode uint16){
 				PC+=2
 			}
 		
-		case opcode>>12 == 0x6:
-		case opcode>>12 == 0x7:
+		case opcode>>12 == 0x6: // 0x6XNN set vX register to the value NN
+			registers[opcode>>8 & 0x0F] = byte(opcode & 0x00FF)
+		case opcode>>12 == 0x7: // 0x7XNN adds value NN to the vX register
+			if registers[opcode>>8 & 0x0F] + byte(opcode & 0x00FF) > 0xFF{
+				registers[opcode>>8 & 0x0F] = 0xFF
+			}else{
+				registers[opcode>>8 & 0x0F] += byte(opcode & 0x00FF)
+			}
 		case opcode>>12 == 0x9: // 0x5XY0 skip one instructrion if vX != vY
 			if registers[opcode>>8 & 0x0F] != byte(opcode>>4 & 0x00F){
 				PC+=2
 			}
+		case opcode>>12 == 0xA: // Sets I register
+			reg_I = opcode & 0x00FF
 	}
 }
 
