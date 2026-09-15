@@ -17,7 +17,7 @@ import (
 var (
 	keyMu      sync.Mutex
 	lastPress  = make(map[rune]time.Time)
-	keyHoldFor = 150 * time.Millisecond
+	keyHoldFor = 300 * time.Millisecond
 
 	//Metadata
 	behavior  string  = "new"  // desides if before the Shift command VX would be set or not (old - YES/new - NO)
@@ -55,9 +55,9 @@ var (
 
 	//Other
 	display_dump [32][64]bool
-	opcode       uint16              // opcode
-	PC           int                 // opcode pointer
-	rom_name     = "test_opcode.ch8" // name of executable rom
+	opcode       uint16                   // opcode
+	PC           int                      // opcode pointer
+	rom_name     = "ROMs/test_opcode.ch8" // name of executable rom
 	counter      int
 	sprite       byte // container for the sprite data
 	pixel        bool
@@ -257,8 +257,34 @@ func cpu(opcode uint16) {
 				break
 			}
 		}
-	case opcode>>12 == 0xF:
-		//fmt.Println("Blank instruction")
+	case opcode>>12 == 0xE: // 0xEX9E and 0xEXA1: Skip if key
+		if opcode<<4&0x00F == 0x9 {
+			for i := range len(keypad) {
+				if int(opcode>>8&0x0F) == i {
+					if keypad[i] {
+						PC += 2
+					}
+				}
+			}
+		}
+		if opcode<<4&0x00F == 0xA {
+			for i := range len(keypad) {
+				if int(opcode>>8&0x0F) != i {
+					if keypad[i] {
+						PC += 2
+					}
+				}
+			}
+		}
+	case opcode>>12 == 0xF: //FX07, FX15 and FX18: Timers
+		switch opcode & 0x000F {
+		case 0x7:
+			registers[opcode<<8&0x0F] = delay_timer
+		case 0x5:
+			delay_timer = registers[opcode<<8&0x0F]
+		case 0x8:
+			sound_timer = registers[opcode<<8&0x0F]
+		}
 	default:
 		//fmt.Println("Nothing happened - ", opcode)
 	}
@@ -339,10 +365,10 @@ func loop() {
 		input_handler()
 		cpu(opcode)
 		if !slices.Equal(ram, ram_dump) || !slices.Equal(registers, reg_dump) || reg_I != I {
-			// 	fmt.Println(ram)
+			//render(display)
 		}
 		//fmt.Println(ram[PC], "/", ram[PC+1])
-		if counter >= 50 {
+		if counter >= 45 {
 			counter = 0
 			render(display)
 			// fmt.Println("\n")
