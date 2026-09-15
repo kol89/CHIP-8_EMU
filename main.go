@@ -7,128 +7,149 @@ import (
 	"slices"
 	"time"
 
-	"github.com/azul3d/keyboard"
-	//"encoding/hex"
+	"sync"
+	"unicode"
+
+	"github.com/eiannone/keyboard"
 	//"encoding/binary"
 )
 
 var (
+	keyMu      sync.Mutex
+	lastPress  = make(map[rune]time.Time)
+	keyHoldFor = 150 * time.Millisecond
+
 	//Metadata
-	behavior  string  = "old" // desides if before the Shift command VX would be set or not (old - YES/new - NO)
-	cpu_speed float32 = 1     //counted in MHz
+	behavior  string  = "new"  // desides if before the Shift command VX would be set or not (old - YES/new - NO)
+	cpu_speed float32 = 0.0007 //counted in MHz
 
 	// Registers
 	reg_I       uint16                    // index register
 	sound_timer uint8                     // sound timer register
 	delay_timer uint8                     // delay timer register
 	registers   []byte = make([]byte, 16) //general-purpose registers v0-vf
-	reg_dump    []byte = make([]byte, 16)
 
 	//Memory
 	rom []byte = make([]byte, 1024) // rom data buffer
 	ram []byte = make([]byte, 4096) // ram memory
 	//font data stored in first 512 bytes of ram
-	font []byte = []byte{
-		0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
-		0x20, 0x60, 0x20, 0x20, 0x70, // 1
-		0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
-		0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
-		0x90, 0x90, 0xF0, 0x10, 0x10, // 4
-		0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
-		0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
-		0xF0, 0x10, 0x20, 0x40, 0x40, // 7
-		0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
-		0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
-		0xF0, 0x90, 0xF0, 0x90, 0x90, // A
-		0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
-		0xF0, 0x80, 0x80, 0x80, 0xF0, // C
-		0xE0, 0x90, 0x90, 0x90, 0xE0, // D
-		0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
-		0xF0, 0x80, 0xF0, 0x80, 0x80} // F
+	font []byte = []byte{0xF0, 0x90, 0x90, 0x90, 0xF0,
+		0x20, 0x60, 0x20, 0x20, 0x70,
+		0xF0, 0x10, 0xF0, 0x80, 0xF0,
+		0xF0, 0x10, 0xF0, 0x10, 0xF0,
+		0x90, 0x90, 0xF0, 0x10, 0x10,
+		0xF0, 0x80, 0xF0, 0x10, 0xF0,
+		0xF0, 0x80, 0xF0, 0x90, 0xF0,
+		0xF0, 0x10, 0x20, 0x40, 0x40,
+		0xF0, 0x90, 0xF0, 0x90, 0xF0,
+		0xF0, 0x90, 0xF0, 0x10, 0xF0,
+		0xF0, 0x90, 0xF0, 0x90, 0x90,
+		0xE0, 0x90, 0xE0, 0x90, 0xE0,
+		0xF0, 0x80, 0x80, 0x80, 0xF0,
+		0xE0, 0x90, 0x90, 0x90, 0xE0,
+		0xF0, 0x80, 0xF0, 0x80, 0xF0,
+		0xF0, 0x80, 0xF0, 0x80, 0x80}
 	display [32][64]bool                    // Display 64x32 monochrome pixels
 	stack   []byte                          // stack
 	keypad  []bool       = make([]bool, 16) // keypad data
 
 	//Other
-	ram_dump     []byte = make([]byte, 4096)
 	display_dump [32][64]bool
-	opcode       uint16      // opcode
-	PC           int         // opcode pointer
-	rom_name     = "IBM.ch8" // name of executable rom
+	opcode       uint16              // opcode
+	PC           int                 // opcode pointer
+	rom_name     = "test_opcode.ch8" // name of executable rom
 	counter      int
 	sprite       byte // container for the sprite data
 	pixel        bool
-	watcher      *keyboard.Watcher
 )
 
-func input_handler() {
-	status := watcher.States()
-	for i := range keypad {
-		keypad[i] = false
+func startKeyboardListener() {
+	if err := keyboard.Open(); err != nil {
+		panic(err)
 	}
+	go func() {
+		defer keyboard.Close()
+		for {
+			char, key, err := keyboard.GetKey()
+			if err != nil {
+				continue
+			}
+			if key == keyboard.KeyCtrlC {
+				keyboard.Close()
+				os.Exit(0)
+			}
+			keyMu.Lock()
+			lastPress[unicode.ToLower(char)] = time.Now()
+			keyMu.Unlock()
+		}
+	}()
+}
+
+func input_handler() {
+	keyMu.Lock()
+	defer keyMu.Unlock()
+	now := time.Now()
+
 	for i := range keypad {
 		keypad[i] = false
 	}
 
-	if status[keyboard.One] == keyboard.Down {
+	held := func(r rune) bool {
+		t, ok := lastPress[r]
+		return ok && now.Sub(t) < keyHoldFor
+	}
+
+	if held('1') {
 		keypad[0] = true
 	}
-	if status[keyboard.Two] == keyboard.Down {
+	if held('2') {
 		keypad[1] = true
 	}
-	if status[keyboard.Three] == keyboard.Down {
+	if held('3') {
 		keypad[2] = true
 	}
-	if status[keyboard.Four] == keyboard.Down {
+	if held('4') {
 		keypad[12] = true
 	}
 
-	if status[keyboard.Q] == keyboard.Down {
+	if held('q') {
 		keypad[3] = true
 	}
-	if status[keyboard.W] == keyboard.Down {
+	if held('w') {
 		keypad[4] = true
 	}
-	if status[keyboard.E] == keyboard.Down {
+	if held('e') {
 		keypad[5] = true
 	}
-	if status[keyboard.R] == keyboard.Down {
+	if held('r') {
 		keypad[13] = true
 	}
 
-	if status[keyboard.A] == keyboard.Down {
+	if held('a') {
 		keypad[6] = true
 	}
-	if status[keyboard.S] == keyboard.Down {
+	if held('s') {
 		keypad[7] = true
 	}
-	if status[keyboard.D] == keyboard.Down {
+	if held('d') {
 		keypad[8] = true
 	}
-	if status[keyboard.F] == keyboard.Down {
+	if held('f') {
 		keypad[14] = true
 	}
 
-	if status[keyboard.Z] == keyboard.Down {
+	if held('z') {
 		keypad[9] = true
 	}
-	if status[keyboard.X] == keyboard.Down {
+	if held('x') {
 		keypad[10] = true
 	}
-	if status[keyboard.C] == keyboard.Down {
+	if held('c') {
 		keypad[11] = true
 	}
-	if status[keyboard.V] == keyboard.Down {
+	if held('v') {
 		keypad[15] = true
 	}
-	for i := range keypad {
-		if keypad[i] {
-			fmt.Print("1")
-		} else {
-			fmt.Print("0")
-		}
-	}
-	fmt.Println("")
 }
 
 func cpu(opcode uint16) {
@@ -196,11 +217,11 @@ func cpu(opcode uint16) {
 		}
 
 	case opcode>>12 == 0x9: // 0x5XY0 skip one instructrion if VX != VY
-		if registers[opcode>>8&0x0F] != byte(opcode>>4&0x00F) {
+		if registers[opcode>>8&0x0F] != registers[opcode>>4&0x00F] {
 			PC += 2
 		}
 	case opcode>>12 == 0xA: // Sets I (index) register
-		reg_I = opcode & 0x00FF
+		reg_I = opcode & 0x0FFF
 	case opcode>>12 == 0xB: // 0xBNNN Jump with offset
 		if behavior == "old" {
 			PC = int(opcode&0x0FFF + uint16(registers[0]))
@@ -211,28 +232,35 @@ func cpu(opcode uint16) {
 	case opcode>>12 == 0xC: // 0xCXNN Random
 		registers[opcode>>8&0x0F] = byte(rand.Uint32()) & byte(opcode&0x00FF)
 	case opcode>>12 == 0xD: // 0xDXYN Display WIP
-		X := registers[opcode>>8&0x0F] & 63
-		Y := registers[opcode>>4&0x00F] & 31
+		X := registers[opcode>>8&0x0F] % 64
+		Y := registers[opcode>>4&0x00F] % 32
+		N := opcode & 0x000F
 		registers[len(registers)-1] = 0
-		for i := 0; i <= int(opcode&0x000F); i++ {
-			sprite = ram[reg_I+(opcode&0x000F)]
-			for j := 0; j <= 8; j++ {
+		for i := 0; i < int(N); i++ {
+			sprite = ram[int(reg_I)+i]
+			X = registers[opcode>>8&0x0F] % 64
+			for j := 0; j < 8; j++ {
 				pixel = (sprite>>(7-j))&1 == 1
-				if X > 64 {
+				if X >= 64 {
 					break
 				}
 				if pixel {
+					if display[Y][X] {
+						registers[len(registers)-1] = 1
+					}
 					display[Y][X] = !display[Y][X]
-					registers[len(registers)-1] = 1
 				}
 				X++
 			}
 			Y++
-			if Y > 32 {
+			if Y >= 32 {
 				break
 			}
 		}
 	case opcode>>12 == 0xF:
+		//fmt.Println("Blank instruction")
+	default:
+		//fmt.Println("Nothing happened - ", opcode)
 	}
 }
 
@@ -248,18 +276,29 @@ func readRom(name string) []byte {
 }
 
 func render(display [32][64]bool) {
-	for {
-		for _, row := range display {
-			for _, pix := range row {
-				if pix {
-					fmt.Print("#")
-				} else {
-					fmt.Print(".")
-				}
+	fmt.Print("\033[H\033[2J")
+	for _, row := range display {
+		for _, pix := range row {
+			if pix {
+				fmt.Print("██")
+			} else {
+				fmt.Print("  ")
 			}
-			fmt.Print("\n")
+		}
+		fmt.Print("|\n")
+	}
+	fmt.Println("<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>+")
+	fmt.Println("-CHIP-8_EMU-")
+	fmt.Println(registers)
+	for i := range keypad {
+		if keypad[i] {
+			fmt.Print("1 ")
+		} else {
+			fmt.Print("0 ")
 		}
 	}
+	fmt.Println("")
+
 }
 
 func start() {
@@ -285,23 +324,27 @@ func loop() {
 	ticker := time.NewTicker(cycleDuration)
 	defer ticker.Stop()
 	for range ticker.C {
-		ram_dump = ram
-		reg_dump = registers
+		ram_dump := ram
+		reg_dump := registers
+		I := reg_I
 		PC += 2
 		counter++
-		if PC >= 1536 {
+		if PC >= 4096 {
 			PC = 512
 		}
-		opcode = (uint16(ram[PC+1]) << 8) | uint16(ram[PC]) // getting curent opcode
+		opcode = (uint16(ram[PC]) << 8) | uint16(ram[PC+1]) // getting curent opcode
+		// if opcode != 0 {
+		// 	fmt.Println(strconv.FormatInt(int64(opcode), 16))
+		// }
 		input_handler()
 		cpu(opcode)
-		if !slices.Equal(ram, ram_dump) || !slices.Equal(registers, reg_dump) {
-			fmt.Println(ram)
-			//render(display)
+		if !slices.Equal(ram, ram_dump) || !slices.Equal(registers, reg_dump) || reg_I != I {
+			// 	fmt.Println(ram)
 		}
 		//fmt.Println(ram[PC], "/", ram[PC+1])
-		if counter == 700 {
+		if counter >= 50 {
 			counter = 0
+			render(display)
 			// fmt.Println("\n")
 
 			//render(display)
@@ -313,8 +356,12 @@ func loop() {
 }
 
 func main() {
-	//go render(display)
-	watcher = keyboard.NewWatcher()
+	// go func() {
+	// 	for {
+	// 		render(display)
+	// 	}
+	// }()
+	startKeyboardListener()
 	start()
 	loop()
 }
