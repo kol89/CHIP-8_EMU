@@ -53,10 +53,10 @@ var (
 
 	//Other
 	display_dump [32][64]bool
-	opcode       uint16         // opcode
-	PC           int            // opcode pointer
-	rom_name     = "ROMs/B.ch8" // name of executable rom
-	sprite       byte           // container for the sprite data
+	opcode       uint16                   // opcode
+	PC           int                      // opcode pointer
+	rom_name     = "ROMs/test_opcode.ch8" // name of executable rom
+	sprite       byte                     // container for the sprite data
 	pixel        bool
 )
 
