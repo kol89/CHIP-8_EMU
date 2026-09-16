@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"slices"
-	"time"
-
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/eiannone/keyboard"
@@ -20,9 +18,9 @@ var (
 	keyHoldFor = 300 * time.Millisecond
 
 	//Metadata
-	behavior  string  = "new"  // desides if before the Shift command VX would be set or not (old - YES/new - NO)
-	cpu_speed float32 = 0.0007 //counted in MHz
-
+	behavior    string  = "old"  // desides if before the Shift command VX would be set or not (old - YES/new - NO)
+	cpu_speed   float32 = 0.0007 //counted in MHz 0.0007
+	timer_speed float32 = 0.00006
 	// Registers
 	reg_I       uint16                    // index register
 	sound_timer uint8                     // sound timer register
@@ -50,16 +48,15 @@ var (
 		0xF0, 0x80, 0xF0, 0x80, 0xF0,
 		0xF0, 0x80, 0xF0, 0x80, 0x80}
 	display [32][64]bool                    // Display 64x32 monochrome pixels
-	stack   []byte                          // stack
+	stack   []uint16                        // stack
 	keypad  []bool       = make([]bool, 16) // keypad data
 
 	//Other
 	display_dump [32][64]bool
-	opcode       uint16                   // opcode
-	PC           int                      // opcode pointer
-	rom_name     = "ROMs/test_opcode.ch8" // name of executable rom
-	counter      int
-	sprite       byte // container for the sprite data
+	opcode       uint16         // opcode
+	PC           int            // opcode pointer
+	rom_name     = "ROMs/B.ch8" // name of executable rom
+	sprite       byte           // container for the sprite data
 	pixel        bool
 )
 
@@ -164,13 +161,13 @@ func cpu(opcode uint16) {
 		PC = int(opcode & 0x0FFF)
 		PC -= 2
 	case opcode>>12 == 0x2: // 0x2NNN call a subroutine from NNN adress
-		stack = append(stack, byte(PC))
+		stack = append(stack, uint16(PC))
 		PC = int(opcode & 0x0FFF)
 		PC -= 2
 	case opcode == 0x00EE: // return from subroutine to the last adress in stack
 		PC = int(stack[len(stack)-1])
 		stack = stack[:len(stack)-1]
-		PC -= 2
+		//PC -= 2 //Every bug was due to this shit
 	case opcode>>12 == 0x3: // 0x3XNN skip one instructrion if VX == NN
 		if registers[opcode>>8&0x0F] == byte(opcode&0x00FF) {
 			PC += 2
@@ -183,11 +180,7 @@ func cpu(opcode uint16) {
 	case opcode>>12 == 0x6: // 0x6XNN set VX register to the value NN
 		registers[opcode>>8&0x0F] = byte(opcode & 0x00FF)
 	case opcode>>12 == 0x7: // 0x7XNN adds value NN to the VX register
-		if registers[opcode>>8&0x0F]+byte(opcode&0x00FF) > 0xFF {
-			registers[opcode>>8&0x0F] = 0xFF
-		} else {
-			registers[opcode>>8&0x0F] += byte(opcode & 0x00FF)
-		}
+		registers[opcode>>8&0x0F] += byte(opcode & 0x00FF)
 	case opcode>>12 == 0x8: // Logical and arithmetic instructions
 		switch opcode & 0x000F {
 		case 0x0: // Set
@@ -199,8 +192,18 @@ func cpu(opcode uint16) {
 		case 0x3: // Logical XOR
 			registers[opcode>>8&0x0F] = registers[opcode>>8&0x0F] ^ registers[opcode>>4&0x00F]
 		case 0x4: // Add
+			if int(registers[opcode>>8&0x0F])+int(registers[opcode>>4&0x00F]) >= 255 {
+				registers[0xF] = 1
+			} else {
+				registers[0xF] = 0
+			}
 			registers[opcode>>8&0x0F] += registers[opcode>>4&0x00F]
 		case 0x5: // sets VX to the result of VX - VY
+			if registers[opcode>>8&0x0F] >= registers[opcode>>4&0x00F] {
+				registers[0xF] = 1
+			} else {
+				registers[0xF] = 0
+			}
 			registers[opcode>>8&0x0F] -= registers[opcode>>4&0x00F]
 		case 0x6: // Shift right
 			if behavior == "old" {
@@ -208,6 +211,11 @@ func cpu(opcode uint16) {
 			}
 			registers[opcode>>8&0x0F] = registers[opcode>>8&0x0F] >> 1
 		case 0x7: // sets VX to the result of VY - VX
+			if registers[opcode>>8&0x0F] <= registers[opcode>>4&0x00F] {
+				registers[0xF] = 1
+			} else {
+				registers[0xF] = 0
+			}
 			registers[opcode>>8&0x0F] = registers[opcode>>4&0x00F] - registers[opcode>>8&0x0F]
 		case 0xE: // Shift left
 			if behavior == "old" {
@@ -258,18 +266,18 @@ func cpu(opcode uint16) {
 			}
 		}
 	case opcode>>12 == 0xE: // 0xEX9E and 0xEXA1: Skip if key
-		if opcode<<4&0x00F == 0x9 {
+		if opcode&0x00FF == 0x9E {
 			for i := range len(keypad) {
-				if int(opcode>>8&0x0F) == i {
+				if int(registers[opcode>>8&0x0F]) == i {
 					if keypad[i] {
 						PC += 2
 					}
 				}
 			}
 		}
-		if opcode<<4&0x00F == 0xA {
+		if opcode&0x00FF == 0xA1 {
 			for i := range len(keypad) {
-				if int(opcode>>8&0x0F) != i {
+				if int(registers[opcode>>8&0x0F]) != i {
 					if keypad[i] {
 						PC += 2
 					}
@@ -277,13 +285,13 @@ func cpu(opcode uint16) {
 			}
 		}
 	case opcode>>12 == 0xF: //FX07, FX15 and FX18: Timers
-		switch opcode & 0x000F {
-		case 0x7:
-			registers[opcode<<8&0x0F] = delay_timer
-		case 0x5:
-			delay_timer = registers[opcode<<8&0x0F]
-		case 0x8:
-			sound_timer = registers[opcode<<8&0x0F]
+		switch opcode & 0x00FF {
+		case 0x07:
+			registers[opcode>>8&0x0F] = delay_timer
+		case 0x15:
+			delay_timer = registers[opcode>>8&0x0F]
+		case 0x18:
+			sound_timer = registers[opcode>>8&0x0F]
 		}
 	default:
 		//fmt.Println("Nothing happened - ", opcode)
@@ -316,6 +324,8 @@ func render(display [32][64]bool) {
 	fmt.Println("<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>+")
 	fmt.Println("-CHIP-8_EMU-")
 	fmt.Println(registers)
+	//fmt.Println(stack, " ", ram[stack[0]], " ", ram[stack[0]+1])
+	fmt.Println(delay_timer, " ", sound_timer)
 	for i := range keypad {
 		if keypad[i] {
 			fmt.Print("1 ")
@@ -328,17 +338,16 @@ func render(display [32][64]bool) {
 }
 
 func start() {
-	PC = 512 //Setting opcode pointer to the first memory rom bank
-	counter = 0
+	PC = 510 //Setting opcode pointer to the first memory rom bank
 
 	//store font data into memory
-	for i := 0; i < len(font); i++ {
+	for i := range len(font) {
 		ram[i] = font[i]
 	}
 
 	//read rom data and store into memory
 	rom = readRom(rom_name)
-	for i := 0; i < len(rom); i++ {
+	for i := range len(rom) {
 		ram[i+512] = rom[i]
 	}
 
@@ -350,44 +359,44 @@ func loop() {
 	ticker := time.NewTicker(cycleDuration)
 	defer ticker.Stop()
 	for range ticker.C {
-		ram_dump := ram
-		reg_dump := registers
-		I := reg_I
 		PC += 2
-		counter++
-		if PC >= 4096 {
+		if PC > 4096 {
 			PC = 512
 		}
 		opcode = (uint16(ram[PC]) << 8) | uint16(ram[PC+1]) // getting curent opcode
-		// if opcode != 0 {
-		// 	fmt.Println(strconv.FormatInt(int64(opcode), 16))
-		// }
 		input_handler()
 		cpu(opcode)
-		if !slices.Equal(ram, ram_dump) || !slices.Equal(registers, reg_dump) || reg_I != I {
-			//render(display)
-		}
-		//fmt.Println(ram[PC], "/", ram[PC+1])
-		if counter >= 45 {
-			counter = 0
-			render(display)
-			// fmt.Println("\n")
+	}
+}
 
-			//render(display)
-			//render(display)
-			//fmt.Println("////")
-			//fmt.Println(ram)
+func frame_loop() {
+	disp_domp := display
+	timerDuration := time.Second / time.Duration(timer_speed*1_000_000)
+	ticker2 := time.NewTicker(timerDuration)
+	Counter := 0
+	for range ticker2.C {
+		for i := range len(display) {
+			if disp_domp[i] != display[i] {
+				render(display)
+			}
 		}
+		if Counter == 6 {
+			Counter = 0
+			render(display)
+		}
+		if delay_timer > 0 {
+			delay_timer--
+		}
+		if sound_timer > 0 {
+			sound_timer--
+		}
+		Counter++
 	}
 }
 
 func main() {
-	// go func() {
-	// 	for {
-	// 		render(display)
-	// 	}
-	// }()
 	startKeyboardListener()
 	start()
+	go frame_loop()
 	loop()
 }
