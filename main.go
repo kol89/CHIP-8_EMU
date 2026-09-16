@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"os"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/eiannone/keyboard"
+	"github.com/hajimehoshi/ebiten/v2"
 	//"encoding/binary"
 )
 
@@ -59,6 +61,10 @@ var (
 	sprite       byte                // container for the sprite data
 	pixel        bool
 )
+
+type Game struct {
+	display []byte
+}
 
 func startKeyboardListener() {
 	if err := keyboard.Open(); err != nil {
@@ -428,7 +434,42 @@ func frame_loop() {
 	}
 }
 
+func (g *Game) Update() error {
+	return nil
+}
+
+func (g *Game) Draw(pix []byte) {
+	for _, i := range len(display) {
+		for _, j := range len(display[i]) {
+			if display[i][j] {
+				pix[j] = 0xFF
+			} else {
+				pix[j] = 0x00
+			}
+		}
+	}
+}
+
+func (g *Game) Draw(screen *ebiten.Image) {
+	if g.pixels == nil {
+		g.pixels = make([]byte, 320*240*4)
+	}
+	g.world.Draw(g.pixels)
+	screen.WritePixels(g.pixels)
+}
+
+func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
+	return 320, 240
+}
+
 func main() {
+	ebiten.SetWindowSize(64, 32)
+	ebiten.SetWindowTitle("Game")
+	go func() {
+		if err := ebiten.RunGame(&Game{}); err != nil {
+			log.Fatal(err)
+		}
+	}()
 	startKeyboardListener()
 	start()
 	go frame_loop()
