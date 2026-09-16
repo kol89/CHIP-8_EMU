@@ -53,10 +53,10 @@ var (
 
 	//Other
 	display_dump [32][64]bool
-	opcode       uint16                   // opcode
-	PC           int                      // opcode pointer
-	rom_name     = "ROMs/test_opcode.ch8" // name of executable rom
-	sprite       byte                     // container for the sprite data
+	opcode       uint16              // opcode
+	PC           int                 // opcode pointer
+	rom_name     = "ROMs/Tetris.ch8" // name of executable rom
+	sprite       byte                // container for the sprite data
 	pixel        bool
 )
 
@@ -172,11 +172,14 @@ func cpu(opcode uint16) {
 		if registers[opcode>>8&0x0F] == byte(opcode&0x00FF) {
 			PC += 2
 		}
+	case opcode>>12 == 0x4: // 0x3XNN skip one instructrion if VX == NN
+		if registers[opcode>>8&0x0F] != byte(opcode&0x00FF) {
+			PC += 2
+		}
 	case opcode>>12 == 0x5: // 0x5XY0 skip one instructrion if VX == VY
 		if registers[opcode>>8&0x0F] == registers[opcode>>4&0x00F] {
 			PC += 2
 		}
-
 	case opcode>>12 == 0x6: // 0x6XNN set VX register to the value NN
 		registers[opcode>>8&0x0F] = byte(opcode & 0x00FF)
 	case opcode>>12 == 0x7: // 0x7XNN adds value NN to the VX register
@@ -223,7 +226,6 @@ func cpu(opcode uint16) {
 			}
 			registers[opcode>>8&0x0F] = registers[opcode>>8&0x0F] << 1
 		}
-
 	case opcode>>12 == 0x9: // 0x5XY0 skip one instructrion if VX != VY
 		if registers[opcode>>8&0x0F] != registers[opcode>>4&0x00F] {
 			PC += 2
@@ -266,36 +268,49 @@ func cpu(opcode uint16) {
 			}
 		}
 	case opcode>>12 == 0xE: // 0xEX9E and 0xEXA1: Skip if key
-		if opcode&0x00FF == 0x9E {
-			for i := range len(keypad) {
-				if int(registers[opcode>>8&0x0F]) == i {
-					if keypad[i] {
-						PC += 2
-					}
-				}
+		x := int(registers[opcode>>8&0x0F])
+		if opcode&0x00FF == 0x9E { // skip if key VX is pressed
+			if keypad[x] {
+				PC += 2
 			}
 		}
-		if opcode&0x00FF == 0xA1 {
-			for i := range len(keypad) {
-				if int(registers[opcode>>8&0x0F]) != i {
-					if keypad[i] {
-						PC += 2
-					}
-				}
+		if opcode&0x00FF == 0xA1 { // skip if key VX is NOT pressed
+			if !keypad[x] {
+				PC += 2
 			}
 		}
 	case opcode>>12 == 0xF: //FX07, FX15 and FX18: Timers
 		switch opcode & 0x00FF {
 		case 0x07:
 			registers[opcode>>8&0x0F] = delay_timer
+		case 0x0A:
+			end := false
+			for {
+				time.Sleep(5 * time.Millisecond)
+				if end {
+					break
+				}
+				input_handler()
+				for i := range len(keypad) {
+					if keypad[i] {
+						registers[opcode>>8&0x0F] = byte(i)
+						end = true
+						break
+					}
+				}
+			}
 		case 0x15:
 			delay_timer = registers[opcode>>8&0x0F]
 		case 0x18:
 			sound_timer = registers[opcode>>8&0x0F]
+		case 0x1E:
+			reg_I += uint16(registers[opcode>>8&0x0F])
+		case 0x29:
+			reg_I = uint16(registers[opcode>>8&0x0F]) * 5
 		case 0x33:
 			x := (opcode >> 8) & 0x0F
 			num := registers[x]
-			if reg_I+2 <= 4096 {
+			if reg_I+2 < 4096 {
 				ram[reg_I] = num / 100
 				ram[reg_I+1] = (num / 10) % 10
 				ram[reg_I+2] = num % 10
@@ -305,7 +320,6 @@ func cpu(opcode uint16) {
 			for i := 0; i <= x; i++ {
 				ram[int(reg_I)+i] = registers[i]
 			}
-
 		case 0x65:
 			x := int((opcode >> 8) & 0x0F)
 			for i := 0; i <= x; i++ {
@@ -313,7 +327,7 @@ func cpu(opcode uint16) {
 			}
 		}
 	default:
-		//fmt.Println("Nothing happened - ", opcode)
+		fmt.Println("Nothing happened - ", opcode)
 	}
 }
 
@@ -352,7 +366,7 @@ func render(display [32][64]bool) {
 			fmt.Print("0 ")
 		}
 	}
-	fmt.Println("")
+	//fmt.Println("")
 
 }
 
