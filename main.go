@@ -292,6 +292,25 @@ func cpu(opcode uint16) {
 			delay_timer = registers[opcode>>8&0x0F]
 		case 0x18:
 			sound_timer = registers[opcode>>8&0x0F]
+		case 0x33:
+			x := (opcode >> 8) & 0x0F
+			num := registers[x]
+			if reg_I+2 <= 4096 {
+				ram[reg_I] = num / 100
+				ram[reg_I+1] = (num / 10) % 10
+				ram[reg_I+2] = num % 10
+			}
+		case 0x55:
+			x := int((opcode >> 8) & 0x0F)
+			for i := 0; i <= x; i++ {
+				ram[int(reg_I)+i] = registers[i]
+			}
+
+		case 0x65:
+			x := int((opcode >> 8) & 0x0F)
+			for i := 0; i <= x; i++ {
+				registers[i] = ram[int(reg_I)+i]
+			}
 		}
 	default:
 		//fmt.Println("Nothing happened - ", opcode)
@@ -359,27 +378,28 @@ func loop() {
 	ticker := time.NewTicker(cycleDuration)
 	defer ticker.Stop()
 	for range ticker.C {
+		disp_domp := display
 		PC += 2
-		if PC > 4096 {
+		if PC > 4096 || (uint16(ram[PC])<<8)|uint16(ram[PC+1]) == 0 {
 			PC = 512
 		}
 		opcode = (uint16(ram[PC]) << 8) | uint16(ram[PC+1]) // getting curent opcode
 		input_handler()
 		cpu(opcode)
+		for i := range len(display) {
+			if disp_domp[i] != display[i] {
+				render(display)
+				break
+			}
+		}
 	}
 }
 
 func frame_loop() {
-	disp_domp := display
 	timerDuration := time.Second / time.Duration(timer_speed*1_000_000)
 	ticker2 := time.NewTicker(timerDuration)
 	Counter := 0
 	for range ticker2.C {
-		for i := range len(display) {
-			if disp_domp[i] != display[i] {
-				render(display)
-			}
-		}
 		if Counter == 6 {
 			Counter = 0
 			render(display)
