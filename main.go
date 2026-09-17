@@ -17,11 +17,11 @@ import (
 var (
 	keyMu      sync.Mutex
 	lastPress  = make(map[rune]time.Time)
-	keyHoldFor = 300 * time.Millisecond
+	keyHoldFor = 100 * time.Millisecond
 
 	//Metadata
-	behavior    string  = "old"  // desides if before the Shift command VX would be set or not (old - YES/new - NO)
-	cpu_speed   float32 = 0.0007 //counted in MHz 0.0007
+	behavior    string  = "old" // desides if before the Shift command VX would be set or not (old - YES/new - NO)
+	cpu_speed   float32 = 0.001 //counted in MHz 0.0007
 	timer_speed float32 = 0.00006
 	// Registers
 	reg_I       uint16                    // index register
@@ -49,9 +49,10 @@ var (
 		0xE0, 0x90, 0x90, 0x90, 0xE0,
 		0xF0, 0x80, 0xF0, 0x80, 0xF0,
 		0xF0, 0x80, 0xF0, 0x80, 0x80}
-	display [32][64]bool                    // Display 64x32 monochrome pixels
-	stack   []uint16                        // stack
-	keypad  []bool       = make([]bool, 16) // keypad data
+	display [32][64]bool // Display 64x32 monochrome pixels
+	disp    []byte
+	stack   []uint16                    // stack
+	keypad  []bool   = make([]bool, 16) // keypad data
 
 	//Other
 	display_dump [32][64]bool
@@ -112,46 +113,46 @@ func input_handler() {
 		keypad[2] = true
 	}
 	if held('4') {
-		keypad[12] = true
+		keypad[4] = true
 	}
 
 	if held('q') {
-		keypad[3] = true
-	}
-	if held('w') {
-		keypad[4] = true
-	}
-	if held('e') {
 		keypad[5] = true
 	}
+	if held('w') {
+		keypad[6] = true
+	}
+	if held('e') {
+		keypad[7] = true
+	}
 	if held('r') {
-		keypad[13] = true
+		keypad[8] = true
 	}
 
 	if held('a') {
-		keypad[6] = true
+		keypad[9] = true
 	}
 	if held('s') {
-		keypad[7] = true
+		keypad[10] = true
 	}
 	if held('d') {
-		keypad[8] = true
+		keypad[11] = true
 	}
 	if held('f') {
-		keypad[14] = true
+		keypad[12] = true
 	}
 
 	if held('z') {
-		keypad[9] = true
+		keypad[13] = true
 	}
 	if held('x') {
-		keypad[10] = true
+		keypad[14] = true
 	}
 	if held('c') {
-		keypad[11] = true
+		keypad[15] = true
 	}
 	if held('v') {
-		keypad[15] = true
+		keypad[16] = true
 	}
 }
 
@@ -398,7 +399,6 @@ func loop() {
 	ticker := time.NewTicker(cycleDuration)
 	defer ticker.Stop()
 	for range ticker.C {
-		disp_domp := display
 		PC += 2
 		if PC > 4096 || (uint16(ram[PC])<<8)|uint16(ram[PC+1]) == 0 {
 			PC = 512
@@ -406,12 +406,7 @@ func loop() {
 		opcode = (uint16(ram[PC]) << 8) | uint16(ram[PC+1]) // getting curent opcode
 		input_handler()
 		cpu(opcode)
-		for i := range len(display) {
-			if disp_domp[i] != display[i] {
-				render(display)
-				break
-			}
-		}
+
 	}
 }
 
@@ -420,10 +415,10 @@ func frame_loop() {
 	ticker2 := time.NewTicker(timerDuration)
 	Counter := 0
 	for range ticker2.C {
-		if Counter == 6 {
-			Counter = 0
-			render(display)
-		}
+		// if Counter == 6 {
+		// 	Counter = 0
+		// 	render(display)
+		// }
 		if delay_timer > 0 {
 			delay_timer--
 		}
@@ -438,32 +433,39 @@ func (g *Game) Update() error {
 	return nil
 }
 
-func (g *Game) Draw(pix []byte) {
-	for _, i := range len(display) {
-		for _, j := range len(display[i]) {
-			if display[i][j] {
-				pix[j] = 0xFF
+func (g *Game) Draw(screen *ebiten.Image) {
+	//disp_domp := display
+	disp = make([]byte, 0)
+	//fmt.Println(disp)
+	for j := range display {
+		for k := range display[j] {
+			if display[j][k] {
+				disp = append(disp, 255)
+				disp = append(disp, 255)
+				disp = append(disp, 255)
+				disp = append(disp, 255)
 			} else {
-				pix[j] = 0x00
+				disp = append(disp, 0)
+				disp = append(disp, 0)
+				disp = append(disp, 0)
+				disp = append(disp, 0)
+
 			}
 		}
 	}
-}
-
-func (g *Game) Draw(screen *ebiten.Image) {
-	if g.pixels == nil {
-		g.pixels = make([]byte, 320*240*4)
-	}
-	g.world.Draw(g.pixels)
-	screen.WritePixels(g.pixels)
+	//x:= make([]byte, 6144)
+	// for range 6144{
+	// 	disp=append(disp, 0)
+	// }
+	screen.WritePixels(disp)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
-	return 320, 240
+	return 64, 32
 }
 
 func main() {
-	ebiten.SetWindowSize(64, 32)
+	ebiten.SetWindowSize(64*10, 32*10)
 	ebiten.SetWindowTitle("Game")
 	go func() {
 		if err := ebiten.RunGame(&Game{}); err != nil {
