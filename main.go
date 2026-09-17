@@ -8,19 +8,21 @@ import (
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/audio"
 	//"encoding/binary"
 )
 
 var (
 	//Metadata
 	behavior    string  = "old" // desides if before the Shift command VX would be set or not (old - YES/new - NO)
-	cpu_speed   float32 = 0.001 //counted in MHz 0.0007
+	cpu_speed   float32 = 0.0007 //counted in MHz 0.0007
 	timer_speed float32 = 0.00006
 	// Registers
 	reg_I       uint16                    // index register
 	sound_timer uint8                     // sound timer register
 	delay_timer uint8                     // delay timer register
 	registers   []byte = make([]byte, 16) //general-purpose registers v0-vf
+	opcode       uint16              // opcode
 
 	//Memory
 	rom []byte = make([]byte, 1024) // rom data buffer
@@ -48,13 +50,22 @@ var (
 	keypad  []bool   = make([]bool, 16) // keypad data
 
 	//Other
-	display_dump [32][64]bool
-	opcode       uint16              // opcode
 	PC           int                 // opcode pointer
-	rom_name     = "ROMs/Tetris.ch8" // name of executable rom
+	rom_name     = "ROMs/B.ch8" // name of executable rom
 	sprite       byte                // container for the sprite data
 	pixel        bool
+
+	//Sound
+	sampleRate  = 44100
+	beepFreq    = 440.0 // Hz, the classic CHIP-8 beep tone
+	audioCtx    *audio.Context
+	soundPlayer *audio.Player
 )
+type squareWave struct {
+	freq float64
+	pos  int64
+}
+
 
 type Game struct {
 	display []byte
@@ -67,6 +78,37 @@ var keyMap = map[ebiten.Key]int{
 	ebiten.KeyA: 0x7, ebiten.KeyS: 0x8, ebiten.KeyD: 0x9, ebiten.KeyF: 0xE,
 	ebiten.KeyZ: 0xA, ebiten.KeyX: 0x0, ebiten.KeyC: 0xB, ebiten.KeyV: 0xF,
 }
+
+func (s *squareWave) Read(buf []byte) (int, error) {
+	const amplitude = 6000
+	period := int64(float64(sampleRate) / s.freq)
+	if period <= 0 {
+		period = 1
+	}
+	n := len(buf) / 4 // 4 bytes per stereo sample (2 bytes L + 2 bytes R, 16-bit)
+	for i := 0; i < n; i++ {
+		var v int16 = amplitude
+		if s.pos%period >= period/2 {
+			v = -amplitude
+		}
+		buf[4*i] = byte(v)
+		buf[4*i+1] = byte(v >> 8)
+		buf[4*i+2] = byte(v)
+		buf[4*i+3] = byte(v >> 8)
+		s.pos++
+	}
+	return n * 4, nil
+}
+
+func initAudio() {
+	audioCtx = audio.NewContext(sampleRate)
+	var err error
+	soundPlayer, err = audioCtx.NewPlayer(&squareWave{freq: beepFreq})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 
 func input_handler() {
 	for i := range keypad {
@@ -319,6 +361,12 @@ func frame_loop() {
 		}
 		if sound_timer > 0 {
 			sound_timer--
+			if soundPlayer != nil && !soundPlayer.IsPlaying() {
+				soundPlayer.Play()
+			}else if soundPlayer != nil && soundPlayer.IsPlaying() {
+				soundPlayer.Pause()
+			}
+
 		}
 		Counter++
 	}
@@ -363,6 +411,7 @@ func main() {
 		}
 	}()
 	start()
+	initAudio()
 	go frame_loop()
 	loop()
 }
