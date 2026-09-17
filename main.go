@@ -5,20 +5,13 @@ import (
 	"log"
 	"math/rand/v2"
 	"os"
-	"sync"
 	"time"
-	"unicode"
 
-	"github.com/eiannone/keyboard"
 	"github.com/hajimehoshi/ebiten/v2"
 	//"encoding/binary"
 )
 
 var (
-	keyMu      sync.Mutex
-	lastPress  = make(map[rune]time.Time)
-	keyHoldFor = 100 * time.Millisecond
-
 	//Metadata
 	behavior    string  = "old" // desides if before the Shift command VX would be set or not (old - YES/new - NO)
 	cpu_speed   float32 = 0.001 //counted in MHz 0.0007
@@ -67,92 +60,22 @@ type Game struct {
 	display []byte
 }
 
-func startKeyboardListener() {
-	if err := keyboard.Open(); err != nil {
-		panic(err)
-	}
-	go func() {
-		defer keyboard.Close()
-		for {
-			char, key, err := keyboard.GetKey()
-			if err != nil {
-				continue
-			}
-			if key == keyboard.KeyCtrlC {
-				keyboard.Close()
-				os.Exit(0)
-			}
-			keyMu.Lock()
-			lastPress[unicode.ToLower(char)] = time.Now()
-			keyMu.Unlock()
-		}
-	}()
+// keypad key index map
+var keyMap = map[ebiten.Key]int{
+	ebiten.Key1: 0x1, ebiten.Key2: 0x2, ebiten.Key3: 0x3, ebiten.Key4: 0xC,
+	ebiten.KeyQ: 0x4, ebiten.KeyW: 0x5, ebiten.KeyE: 0x6, ebiten.KeyR: 0xD,
+	ebiten.KeyA: 0x7, ebiten.KeyS: 0x8, ebiten.KeyD: 0x9, ebiten.KeyF: 0xE,
+	ebiten.KeyZ: 0xA, ebiten.KeyX: 0x0, ebiten.KeyC: 0xB, ebiten.KeyV: 0xF,
 }
 
 func input_handler() {
-	keyMu.Lock()
-	defer keyMu.Unlock()
-	now := time.Now()
-
 	for i := range keypad {
 		keypad[i] = false
 	}
-
-	held := func(r rune) bool {
-		t, ok := lastPress[r]
-		return ok && now.Sub(t) < keyHoldFor
-	}
-
-	if held('1') {
-		keypad[0] = true
-	}
-	if held('2') {
-		keypad[1] = true
-	}
-	if held('3') {
-		keypad[2] = true
-	}
-	if held('4') {
-		keypad[4] = true
-	}
-
-	if held('q') {
-		keypad[5] = true
-	}
-	if held('w') {
-		keypad[6] = true
-	}
-	if held('e') {
-		keypad[7] = true
-	}
-	if held('r') {
-		keypad[8] = true
-	}
-
-	if held('a') {
-		keypad[9] = true
-	}
-	if held('s') {
-		keypad[10] = true
-	}
-	if held('d') {
-		keypad[11] = true
-	}
-	if held('f') {
-		keypad[12] = true
-	}
-
-	if held('z') {
-		keypad[13] = true
-	}
-	if held('x') {
-		keypad[14] = true
-	}
-	if held('c') {
-		keypad[15] = true
-	}
-	if held('v') {
-		keypad[16] = true
+	for key, idx := range keyMap {
+		if ebiten.IsKeyPressed(key) {
+			keypad[idx] = true
+		}
 	}
 }
 
@@ -349,34 +272,6 @@ func readRom(name string) []byte {
 	return result
 }
 
-func render(display [32][64]bool) {
-	fmt.Print("\033[H\033[2J")
-	for _, row := range display {
-		for _, pix := range row {
-			if pix {
-				fmt.Print("██")
-			} else {
-				fmt.Print("  ")
-			}
-		}
-		fmt.Print("|\n")
-	}
-	fmt.Println("<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>+")
-	fmt.Println("-CHIP-8_EMU-")
-	fmt.Println(registers)
-	//fmt.Println(stack, " ", ram[stack[0]], " ", ram[stack[0]+1])
-	fmt.Println(delay_timer, " ", sound_timer)
-	for i := range keypad {
-		if keypad[i] {
-			fmt.Print("1 ")
-		} else {
-			fmt.Print("0 ")
-		}
-	}
-	//fmt.Println("")
-
-}
-
 func start() {
 	PC = 510 //Setting opcode pointer to the first memory rom bank
 
@@ -433,10 +328,9 @@ func (g *Game) Update() error {
 	return nil
 }
 
+// rendering display information
 func (g *Game) Draw(screen *ebiten.Image) {
-	//disp_domp := display
 	disp = make([]byte, 0)
-	//fmt.Println(disp)
 	for j := range display {
 		for k := range display[j] {
 			if display[j][k] {
@@ -453,10 +347,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			}
 		}
 	}
-	//x:= make([]byte, 6144)
-	// for range 6144{
-	// 	disp=append(disp, 0)
-	// }
 	screen.WritePixels(disp)
 }
 
@@ -465,14 +355,13 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeigh
 }
 
 func main() {
-	ebiten.SetWindowSize(64*10, 32*10)
+	ebiten.SetWindowSize(64*20, 32*20)
 	ebiten.SetWindowTitle("Game")
 	go func() {
 		if err := ebiten.RunGame(&Game{}); err != nil {
 			log.Fatal(err)
 		}
 	}()
-	startKeyboardListener()
 	start()
 	go frame_loop()
 	loop()
