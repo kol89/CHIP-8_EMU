@@ -1,3 +1,11 @@
+// INFO
+// - You can change some variables in const list:
+// 		- To change an executable rom, rename an "rom_name" variable
+// 		- If the game run incorectly, you may try changing "behavior" variable to different state
+// 		- You can increase game speed by insreasing "cpu_speed" variable (By default it's 0.0007MHz or 700Hz)
+// -
+
+
 package main
 
 import (
@@ -12,22 +20,33 @@ import (
 	//"encoding/binary"
 )
 
+//--Const list--
+const (
+	//--Metadata--
+	rom_name     = "ROMs/B.ch8" // executable rom name
+	behavior    string  = "old" // (old/new) desides how some instructions shoud work
+	cpu_speed   float32 = 0.0007 // cpu speed (counted in MHz)
+	timer_speed float32 = 0.00006 // frame loop fps (counted in MHz)
+
+	//--Sound--
+	sampleRate  = 44100
+	beepFreq    = 440.0 // Emulated beep tone (default - 440Hz)
+)
+
+//--Variable list--
 var (
-	//Metadata
-	behavior    string  = "old" // desides if before the Shift command VX would be set or not (old - YES/new - NO)
-	cpu_speed   float32 = 0.0007 //counted in MHz 0.0007
-	timer_speed float32 = 0.00006
-	// Registers
+	//--Registers--
 	reg_I       uint16                    // index register
 	sound_timer uint8                     // sound timer register
 	delay_timer uint8                     // delay timer register
 	registers   []byte = make([]byte, 16) //general-purpose registers v0-vf
-	opcode       uint16              // opcode
+	opcode       uint16              // operation code
+	PC           int                 // opcode pointer
 
-	//Memory
-	rom []byte = make([]byte, 1024) // rom data buffer
-	ram []byte = make([]byte, 4096) // ram memory
-	//font data stored in first 512 bytes of ram
+	//--Memory--
+	rom []byte = make([]byte, 1024) // rom data buffer 1KB
+	ram []byte = make([]byte, 4096) // ram memory 4KB
+	// font data stored in first 512 bytes of ram
 	font []byte = []byte{0xF0, 0x90, 0x90, 0x90, 0xF0,
 		0x20, 0x60, 0x20, 0x20, 0x70,
 		0xF0, 0x10, 0xF0, 0x80, 0xF0,
@@ -45,39 +64,34 @@ var (
 		0xF0, 0x80, 0xF0, 0x80, 0xF0,
 		0xF0, 0x80, 0xF0, 0x80, 0x80}
 	display [32][64]bool // Display 64x32 monochrome pixels
-	disp    []byte
+	disp    []byte // display buffer for rendering
 	stack   []uint16                    // stack
 	keypad  []bool   = make([]bool, 16) // keypad data
-
-	//Other
-	PC           int                 // opcode pointer
-	rom_name     = "ROMs/B.ch8" // name of executable rom
 	sprite       byte                // container for the sprite data
 	pixel        bool
+	// keypad key index map
+	keyMap = map[ebiten.Key]int{
+		ebiten.Key1: 0x1, ebiten.Key2: 0x2, ebiten.Key3: 0x3, ebiten.Key4: 0xC,
+		ebiten.KeyQ: 0x4, ebiten.KeyW: 0x5, ebiten.KeyE: 0x6, ebiten.KeyR: 0xD,
+		ebiten.KeyA: 0x7, ebiten.KeyS: 0x8, ebiten.KeyD: 0x9, ebiten.KeyF: 0xE,
+		ebiten.KeyZ: 0xA, ebiten.KeyX: 0x0, ebiten.KeyC: 0xB, ebiten.KeyV: 0xF,
+	}
 
 	//Sound
-	sampleRate  = 44100
-	beepFreq    = 440.0 // Hz, the classic CHIP-8 beep tone
 	audioCtx    *audio.Context
 	soundPlayer *audio.Player
 )
+
 type squareWave struct {
 	freq float64
 	pos  int64
 }
 
-
 type Game struct {
 	display []byte
 }
 
-// keypad key index map
-var keyMap = map[ebiten.Key]int{
-	ebiten.Key1: 0x1, ebiten.Key2: 0x2, ebiten.Key3: 0x3, ebiten.Key4: 0xC,
-	ebiten.KeyQ: 0x4, ebiten.KeyW: 0x5, ebiten.KeyE: 0x6, ebiten.KeyR: 0xD,
-	ebiten.KeyA: 0x7, ebiten.KeyS: 0x8, ebiten.KeyD: 0x9, ebiten.KeyF: 0xE,
-	ebiten.KeyZ: 0xA, ebiten.KeyX: 0x0, ebiten.KeyC: 0xB, ebiten.KeyV: 0xF,
-}
+
 
 func (s *squareWave) Read(buf []byte) (int, error) {
 	const amplitude = 6000
@@ -109,7 +123,7 @@ func initAudio() {
 	}
 }
 
-
+// I thik I don't have to explain this
 func input_handler() {
 	for i := range keypad {
 		keypad[i] = false
@@ -121,6 +135,7 @@ func input_handler() {
 	}
 }
 
+// cpu instruction interpratator
 func cpu(opcode uint16) {
 	switch {
 	case opcode == 0x00E0: // clear screen
@@ -303,6 +318,7 @@ func cpu(opcode uint16) {
 	}
 }
 
+// reads a rom data from file and returns it as byte array
 func readRom(name string) []byte {
 	var result []byte
 
@@ -314,6 +330,7 @@ func readRom(name string) []byte {
 	return result
 }
 
+// initialisations command
 func start() {
 	PC = 510 //Setting opcode pointer to the first memory rom bank
 
@@ -331,6 +348,7 @@ func start() {
 	fmt.Println("Launched successfully!")
 }
 
+// main cpu loop
 func loop() {
 	cycleDuration := time.Second / time.Duration(cpu_speed*1_000_000)
 	ticker := time.NewTicker(cycleDuration)
@@ -347,15 +365,12 @@ func loop() {
 	}
 }
 
+// secondary loop for delay and sound timers
 func frame_loop() {
 	timerDuration := time.Second / time.Duration(timer_speed*1_000_000)
 	ticker2 := time.NewTicker(timerDuration)
 	Counter := 0
 	for range ticker2.C {
-		// if Counter == 6 {
-		// 	Counter = 0
-		// 	render(display)
-		// }
 		if delay_timer > 0 {
 			delay_timer--
 		}
@@ -372,6 +387,7 @@ func frame_loop() {
 	}
 }
 
+// TF2 coconut picture ;)
 func (g *Game) Update() error {
 	return nil
 }
@@ -398,6 +414,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	screen.WritePixels(disp)
 }
 
+//IDK
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
 	return 64, 32
 }
