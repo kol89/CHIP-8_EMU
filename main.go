@@ -354,6 +354,9 @@ func loop() {
 	ticker := time.NewTicker(cycleDuration)
 	defer ticker.Stop()
 	for range ticker.C {
+		if ebiten.IsWindowBeingClosed() {
+			os.Exit(1)
+		}
 		PC += 2
 		if PC > 4096 || (uint16(ram[PC])<<8)|uint16(ram[PC+1]) == 0 {
 			PC = 512
